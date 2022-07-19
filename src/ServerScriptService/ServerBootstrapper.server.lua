@@ -1,19 +1,17 @@
 
 for _, folder in next, game:GetService("ServerScriptService"):GetChildren() do
     if folder:IsA("Folder") then
-        destFolder = nil
+        dest = nil
 
         if folder.Name == "Client" then
-            destFolder = game:GetService("StarterPlayer"):WaitForChild("StarterPlayerScripts"):WaitForChild("ClientSource")
+            dest = game:GetService("StarterPlayer"):WaitForChild("StarterPlayerScripts")
         elseif folder.Name == "Server" then
-            destFolder = game:GetService("ServerStorage"):WaitForChild("ServerSource")
+            dest = game:GetService("ServerStorage")
         elseif folder.Name == "SharedModules" then
-            destFolder = game:GetService("ReplicatedStorage"):WaitForChild("SharedModules")
+            dest = game:GetService("ReplicatedStorage")
         end
 
-        for _, child in next, folder:GetChildren() do
-            folder:Clone().Parent = child
-        end
+        folder:Clone().Parent = dest
     end
 end
 
