@@ -1,4 +1,8 @@
 
+local StarterPlayerScripts = game:GetService("StarterPlayer"):WaitForChild("StarterPlayerScripts")
+local ServerStorage = game:GetService("ServerStorage")
+local RunService = game:GetService("RunService")
+
 local bootstrapper = {}
 
 function bootstrapper:__call()
@@ -10,20 +14,20 @@ function bootstrapper:__call()
 		if splitPath[1] == "" then
 			if splitPath[2] == "src" then
 				parentDirectory =
-					game:GetService("RunService"):IsClient()
+					RunService:IsClient()
 					and
-					game:GetService("StarterPlayer"):WaitForChild("StarterPlayerScripts"):WaitForChild("ClientSource")
+					StarterPlayerScripts:WaitForChild("Client"):WaitForChild("Source")
 					or
-					game:GetService("ServerScriptService"):WaitForChild("ServerSource")
+					ServerStorage:WaitForChild("Server"):WaitForChild("Source")
 			elseif splitPath[2] == "shared" then
-				parentDirectory = game:GetService("ReplicatedStorage"):WaitForChild("SharedModules")
+				parentDirectory = game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("Modules")
 			elseif splitPath[2] == "modules" then
 				parentDirectory = 
-					game:GetService("RunService"):IsClient()
+					RunService:IsClient()
 					and
-					game:GetService("ReplicatedStorage"):WaitForChild("ClientModules")
+					StarterPlayerScripts:WaitForChild("Client"):WaitForChild("Modules")
 					or
-					game:GetService("ServerStorage"):WaitForChild("ServerModules")
+					ServerStorage:WaitForChild("Server"):WaitForChild("Modules")
 			end
 		else
 			error("Malformed path")

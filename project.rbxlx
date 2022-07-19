@@ -1,0 +1,502 @@
+<roblox version="4">
+  <Item class="ReplicatedStorage" referent="0">
+    <Properties>
+      <string name="Name">ReplicatedStorage</string>
+    </Properties>
+    <Item class="ModuleScript" referent="1">
+      <Properties>
+        <string name="Name">Bootstrapper</string>
+        <string name="Source"><![CDATA[
+local StarterPlayerScripts = game:GetService("StarterPlayer"):WaitForChild("StarterPlayerScripts")
+local ServerStorage = game:GetService("ServerStorage")
+local RunService = game:GetService("RunService")
+
+local bootstrapper = {}
+
+function bootstrapper:__call()
+	function shared.require(path)
+		local splitPath = string.split(path, "/")
+		
+		local parentDirectory = nil
+		
+		if splitPath[1] == "" then
+			if splitPath[2] == "src" then
+				parentDirectory =
+					RunService:IsClient()
+					and
+					StarterPlayerScripts:WaitForChild("Client"):WaitForChild("Source")
+					or
+					ServerStorage:WaitForChild("Server"):WaitForChild("Source")
+			elseif splitPath[2] == "shared" then
+				parentDirectory = game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("Modules")
+			elseif splitPath[2] == "modules" then
+				parentDirectory = 
+					RunService:IsClient()
+					and
+					StarterPlayerScripts:WaitForChild("Client"):WaitForChild("Modules")
+					or
+					ServerStorage:WaitForChild("Server"):WaitForChild("Modules")
+			end
+		else
+			error("Malformed path")
+		end
+		
+		local currentDirectory = parentDirectory
+		local module = nil
+		for i = 3, #splitPath do
+			if splitPath[i] == "/" then continue end
+			local child = currentDirectory:FindFirstChild(splitPath[i])
+			if child:IsA("ModuleScript") then
+				module = require(child)
+				if type(module) == "table" and type(module.Init) == "function" then
+					module:Init()
+				end
+			else
+				currentDirectory = child
+			end
+		end
+		
+		return module
+	end
+end
+
+return setmetatable(bootstrapper, bootstrapper)]]></string>
+      </Properties>
+    </Item>
+    <Item class="Folder" referent="2">
+      <Properties>
+        <string name="Name">Shared</string>
+      </Properties>
+      <Item class="Folder" referent="3">
+        <Properties>
+          <string name="Name">Modules</string>
+        </Properties>
+        <Item class="ModuleScript" referent="4">
+          <Properties>
+            <string name="Name">Maid</string>
+            <string name="Source"><![CDATA[---	Manages the cleaning of events and other things.
+-- Useful for encapsulating state and make deconstructors easy
+-- @classmod Maid
+-- @see Signal
+
+local Maid = {}
+Maid.ClassName = "Maid"
+
+--- Returns a new Maid object
+-- @constructor Maid.new()
+-- @treturn Maid
+function Maid.new()
+	return setmetatable({
+		_tasks = {}
+	}, Maid)
+end
+
+function Maid.isMaid(value)
+	return type(value) == "table" and value.ClassName == "Maid"
+end
+
+--- Returns Maid[key] if not part of Maid metatable
+-- @return Maid[key] value
+function Maid:__index(index)
+	if Maid[index] then
+		return Maid[index]
+	else
+		return self._tasks[index]
+	end
+end
+
+--- Add a task to clean up. Tasks given to a maid will be cleaned when
+--  maid[index] is set to a different value.
+-- @usage
+-- Maid[key] = (function)         Adds a task to perform
+-- Maid[key] = (event connection) Manages an event connection
+-- Maid[key] = (Maid)             Maids can act as an event connection, allowing a Maid to have other maids to clean up.
+-- Maid[key] = (Object)           Maids can cleanup objects with a `Destroy` method
+-- Maid[key] = nil                Removes a named task. If the task is an event, it is disconnected. If it is an object,
+--                                it is destroyed.
+function Maid:__newindex(index, newTask)
+	if Maid[index] ~= nil then
+		error(("'%s' is reserved"):format(tostring(index)), 2)
+	end
+
+	local tasks = self._tasks
+	local oldTask = tasks[index]
+
+	if oldTask == newTask then
+		return
+	end
+
+	tasks[index] = newTask
+
+	if oldTask then
+		if type(oldTask) == "function" then
+			oldTask()
+		elseif typeof(oldTask) == "RBXScriptConnection" then
+			oldTask:Disconnect()
+		elseif oldTask.Destroy then
+			oldTask:Destroy()
+		end
+	end
+end
+
+--- Same as indexing, but uses an incremented number as a key.
+-- @param task An item to clean
+-- @treturn number taskId
+function Maid:GiveTask(task)
+	if not task then
+		error("Task cannot be false or nil", 2)
+	end
+
+	local taskId = #self._tasks+1
+	self[taskId] = task
+
+	if type(task) == "table" and (not task.Destroy) then
+		warn("[Maid.GiveTask] - Gave table task without .Destroy\n\n" .. debug.traceback())
+	end
+
+	return taskId
+end
+
+function Maid:GivePromise(promise)
+	if not promise:IsPending() then
+		return promise
+	end
+
+	local newPromise = promise.resolved(promise)
+	local id = self:GiveTask(newPromise)
+
+	-- Ensure GC
+	newPromise:Finally(function()
+		self[id] = nil
+	end)
+
+	return newPromise
+end
+
+--- Cleans up all tasks.
+-- @alias Destroy
+function Maid:DoCleaning()
+	local tasks = self._tasks
+
+	-- Disconnect all events first as we know this is safe
+	for index, task in pairs(tasks) do
+		if typeof(task) == "RBXScriptConnection" then
+			tasks[index] = nil
+			task:Disconnect()
+		end
+	end
+
+	-- Clear out tasks table completely, even if clean up tasks add more tasks to the maid
+	local index, task = next(tasks)
+	while task ~= nil do
+		tasks[index] = nil
+		if type(task) == "function" then
+			task()
+		elseif typeof(task) == "RBXScriptConnection" then
+			task:Disconnect()
+		elseif task.Destroy then
+			task:Destroy()
+		end
+		index, task = next(tasks)
+	end
+end
+
+--- Alias for DoCleaning()
+-- @function Destroy
+Maid.Destroy = Maid.DoCleaning
+
+return Maid
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="5">
+          <Properties>
+            <string name="Name">Signal</string>
+            <string name="Source">--- Lua-side duplication of the API of events on Roblox objects.
+-- Signals are needed for to ensure that for local events objects are passed by
+-- reference rather than by value where possible, as the BindableEvent objects
+-- always pass signal arguments by value, meaning tables will be deep copied.
+-- Roblox's deep copy method parses to a non-lua table compatable format.
+-- @classmod Signal
+
+local Signal = {}
+Signal.__index = Signal
+Signal.ClassName = "Signal"
+
+--- Constructs a new signal.
+-- @constructor Signal.new()
+-- @treturn Signal
+function Signal.new()
+	local self = setmetatable({}, Signal)
+
+	self._bindableEvent = Instance.new("BindableEvent")
+	self._argData = nil
+	self._argCount = nil -- Prevent edge case of :Fire("A", nil) --> "A" instead of "A", nil
+
+	return self
+end
+
+--- Fire the event with the given arguments. All handlers will be invoked. Handlers follow
+-- Roblox signal conventions.
+-- @param ... Variable arguments to pass to handler
+-- @treturn nil
+function Signal:Fire(...)
+	self._argData = {...}
+	self._argCount = select("#", ...)
+	self._bindableEvent:Fire()
+	self._argData = nil
+	self._argCount = nil
+end
+
+--- Connect a new handler to the event. Returns a connection object that can be disconnected.
+-- @tparam function handler Function handler called with arguments passed when `:Fire(...)` is called
+-- @treturn Connection Connection object that can be disconnected
+function Signal:Connect(handler)
+	if not (type(handler) == "function") then
+		error(("connect(%s)"):format(typeof(handler)), 2)
+	end
+
+	return self._bindableEvent.Event:Connect(function()
+		handler(unpack(self._argData, 1, self._argCount))
+	end)
+end
+
+--- Wait for fire to be called, and return the arguments it was given.
+-- @treturn ... Variable arguments from connection
+function Signal:Wait()
+	self._bindableEvent.Event:Wait()
+	assert(self._argData, "Missing arg data, likely due to :TweenSize/Position corrupting threadrefs.")
+	return unpack(self._argData, 1, self._argCount)
+end
+
+--- Disconnects all connected events to the signal. Voids the signal as unusable.
+-- @treturn nil
+function Signal:Destroy()
+	if self._bindableEvent then
+		self._bindableEvent:Destroy()
+		self._bindableEvent = nil
+	end
+
+	self._argData = nil
+	self._argCount = nil
+end
+
+return Signal</string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="6">
+          <Properties>
+            <string name="Name">WaitForPath</string>
+            <string name="Source">--credit to ChipoIndustries on the devforum
+
+local BAD_ARG_ERROR="%s is not a valid %s"
+
+return function(target,path,maxWait)
+	do --error checking
+		local tt=typeof(target)
+		local tp=typeof(path)
+		local tm=typeof(maxWait)
+		if tt~="Instance" then error(BAD_ARG_ERROR:format("Argument 1","Instance")) end
+		if tp~="string" then error(BAD_ARG_ERROR:format("Argument 2","string")) end
+		if tm~="nil" and tm~="number" then error(BAD_ARG_ERROR:format("Argument 3","number")) end
+	end
+	local segments=string.split(path,"/")
+	local latest
+	local start=tick()
+	for index,segment in pairs(segments) do
+		if maxWait then
+			latest=target:WaitForChild(segment,(start+maxWait)-tick())
+		else
+			latest=target:WaitForChild(segment)
+		end
+		if latest then
+			target=latest
+		else
+			return nil
+		end
+	end
+	return latest
+end</string>
+          </Properties>
+        </Item>
+      </Item>
+    </Item>
+  </Item>
+  <Item class="ServerScriptService" referent="7">
+    <Properties>
+      <string name="Name">ServerScriptService</string>
+    </Properties>
+    <Item class="Script" referent="8">
+      <Properties>
+        <string name="Name">ServerBootstrapper</string>
+        <string name="Source"><![CDATA[
+require(game:GetService("ReplicatedStorage"):WaitForChild("Bootstrapper"))()
+
+shared.require("/modules/Network")]]></string>
+      </Properties>
+    </Item>
+  </Item>
+  <Item class="ServerStorage" referent="9">
+    <Properties>
+      <string name="Name">ServerStorage</string>
+    </Properties>
+    <Item class="Folder" referent="10">
+      <Properties>
+        <string name="Name">Server</string>
+      </Properties>
+      <Item class="Folder" referent="11">
+        <Properties>
+          <string name="Name">Modules</string>
+        </Properties>
+        <Item class="ModuleScript" referent="12">
+          <Properties>
+            <string name="Name">Network</string>
+            <string name="Source"><![CDATA[
+local network = {
+	_sendEvent = nil;
+	_recvEvent = nil;
+}
+
+local callbacks = {}
+
+function network:Bind(key, callback)
+	if callbacks[key] then
+		error(("NetworkError: Key %q is already bound to a callback."):format(key))
+	end
+	callbacks[key] = callback
+end
+
+function network:Recv(key, client, ...)
+	return network._recvEvent:InvokeClient(client, key, ...)
+end
+
+function network:Send(key, client, ...)
+	network._sendEvent:FireServer(client, key, ...)
+end
+
+function network:Init()
+	network._sendEvent = Instance.new("RemoteEvent")
+	network._recvEvent = Instance.new("RemoteFunction")
+	
+	network._sendEvent.OnServerEvent:Connect(function(client, key, ...)
+		local callback = callbacks[key]
+		if not callback then
+			warn(("NetworkWarning: No callback bound to key %q."):format(key))
+		else
+			callback(client, ...)
+		end
+	end)
+	
+	network._recvEvent.OnServerInvoke = function(client, key, ...)
+		local callback = callbacks[key]
+		if not callback then
+			warn(("NetworkWarning: No callback bound to key %q."):format(key))
+		else
+			return callback(client, ...)
+		end
+		return nil
+	end
+	
+	network._sendEvent.Parent = game:GetService("ReplicatedStorage")
+	network._recvEvent.Parent = game:GetService("ReplicatedStorage")
+end
+
+return network]]></string>
+          </Properties>
+        </Item>
+      </Item>
+      <Item class="Folder" referent="13">
+        <Properties>
+          <string name="Name">Source</string>
+        </Properties>
+      </Item>
+    </Item>
+  </Item>
+  <Item class="StarterPlayer" referent="14">
+    <Properties>
+      <string name="Name">StarterPlayer</string>
+    </Properties>
+    <Item class="StarterPlayerScripts" referent="15">
+      <Properties>
+        <string name="Name">StarterPlayerScripts</string>
+      </Properties>
+      <Item class="Folder" referent="16">
+        <Properties>
+          <string name="Name">Client</string>
+        </Properties>
+        <Item class="Folder" referent="17">
+          <Properties>
+            <string name="Name">Modules</string>
+          </Properties>
+          <Item class="ModuleScript" referent="18">
+            <Properties>
+              <string name="Name">Network</string>
+              <string name="Source"><![CDATA[
+local network = {
+	_sendEvent = nil;
+	_recvEvent = nil;
+}
+
+local callbacks = {}
+
+function network:Bind(key, callback)
+	if callbacks[key] then
+		error(("NetworkError: Key %q is already bound to a callback."):format(key))
+	end
+	callbacks[key] = callback
+end
+
+function network:Recv(key, ...)
+	return network._recvEvent:InvokeServer(key, ...)
+end
+
+function network:Send(key, ...)
+	network._sendEvent:FireServer(key, ...)
+end
+
+function network:Init()
+	network._sendEvent = game:GetService("ReplicatedStorage"):WaitForChild("RemoteEvent")
+	network._recvEvent = game:GetService("ReplicatedStorage"):WaitForChild("RemoteFunction")
+	
+	network._sendEvent.OnClientEvent:Connect(function(key, ...)
+		local callback = callbacks[key]
+		if not callback then
+			warn(("NetworkWarning: No callback bound to key %q."):format(key))
+		else
+			callback(...)
+		end
+	end)
+	
+	network._recvEvent.OnClientInvoke = function(key, ...)
+		local callback = callbacks[key]
+		if not callback then
+			warn(("NetworkWarning: No callback bound to key %q."):format(key))
+		else
+			return callback(...)
+		end
+		return nil
+	end
+end
+
+return network]]></string>
+            </Properties>
+          </Item>
+        </Item>
+        <Item class="Folder" referent="19">
+          <Properties>
+            <string name="Name">Source</string>
+          </Properties>
+        </Item>
+      </Item>
+      <Item class="LocalScript" referent="20">
+        <Properties>
+          <string name="Name">ClientBootstrapper</string>
+          <string name="Source"><![CDATA[
+require(game:GetService("ReplicatedStorage"):WaitForChild("Bootstrapper"))()
+
+shared.require("/modules/Network")]]></string>
+        </Properties>
+      </Item>
+    </Item>
+  </Item>
+</roblox>
